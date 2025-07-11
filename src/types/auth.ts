@@ -7,6 +7,7 @@ export interface User {
 }
 
 export interface KeycloakTokenParsed {
+  [x: string]: any
   name: string
   email: string
   groups: string[]

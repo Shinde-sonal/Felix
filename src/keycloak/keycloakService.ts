@@ -45,17 +45,17 @@ const initKeycloak = async (realm: string) => {
       Cookies.set("accessToken", keycloak.token!, { expires: 1, secure: true })
       Cookies.set("refreshToken", keycloak.refreshToken!, { expires: 1, secure: true })
       Cookies.set("realm", realm, { expires: 1, secure: true })
-      Cookies.set("username", (keycloak.tokenParsed as KeycloakTokenParsed).name, { expires: 1, secure: true })
+      Cookies.set("username", (keycloak.tokenParsed as KeycloakTokenParsed).email, { expires: 1, secure: true })
+      const groups = (keycloak.tokenParsed as KeycloakTokenParsed) || []
+      console.log("groups??", groups.realm_access.roles)
+      // const role = groups
+      //   .map((g) => {
+      //     const noSlash = g.startsWith("/") ? g.substring(1) : g
+      //     return noSlash.split("_")[0]
+      //   })
+      //   .find(Boolean)
 
-      const groups = (keycloak.tokenParsed as KeycloakTokenParsed).groups || []
-      const role = groups
-        .map((g) => {
-          const noSlash = g.startsWith("/") ? g.substring(1) : g
-          return noSlash.split("_")[0]
-        })
-        .find(Boolean)
-
-      Cookies.set("role", role || "", { expires: 1, secure: true })
+      Cookies.set("role", "admin", { expires: 1, secure: true })
 
       let emailToStore = (keycloak.tokenParsed as KeycloakTokenParsed).email
       if (emailToStore && emailToStore.includes("%")) {

@@ -42,14 +42,14 @@ export const Profile: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Profile Overview */}
         <Card className="lg:col-span-1">
-          <CardHeader className="text-center">
+          <CardHeader className="text-center gap-4">
             <Avatar className="h-24 w-24 mx-auto mb-4">
               <AvatarImage src="/placeholder.svg" alt={user?.name} />
-              <AvatarFallback className="text-2xl">{getInitials(user?.name || "U")}</AvatarFallback>
+              <AvatarFallback className="text-2xl p-2 rounded-full border border-gray-300">{getInitials(user?.name || "U")}</AvatarFallback>
             </Avatar>
             <CardTitle>{user?.name}</CardTitle>
             <CardDescription>{user?.email}</CardDescription>
-            <Badge className={`mt-2 ${getRoleBadgeColor(user?.role || "")}`}>
+            <Badge className={`mt-2 mx-auto ${getRoleBadgeColor(user?.role || "")}`}>
               {user?.role?.replace("-", " ").toUpperCase()}
             </Badge>
           </CardHeader>

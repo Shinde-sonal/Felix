@@ -3,10 +3,12 @@
 import type React from "react"
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom"
 import { AuthProvider, useAuth } from "./contexts/AuthContext"
+import { WalletProvider } from "./contexts/WalletContext"
 import { Layout } from "./components/Layout"
 import { LandingPage } from "./pages/LandingPage"
 import { Dashboard } from "./pages/Dashboard"
 import { Profile } from "./pages/Profile"
+import { Wallet } from "./pages/Wallet"
 import { TicketList } from "./pages/tickets/TicketList"
 import { TicketDetails } from "./pages/tickets/TicketDetails"
 import { CreateTicket } from "./pages/tickets/CreateTicket"
@@ -57,10 +59,11 @@ const AppRoutes: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center bg-white">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">Initializing...</p>
+          <p className="text-gray-600">Authenticating...</p>
+          <p className="text-sm text-gray-400 mt-2">Please wait while we verify your credentials</p>
         </div>
       </div>
     )
@@ -74,12 +77,15 @@ const AppRoutes: React.FC = () => {
         path="/"
         element={
           <ProtectedRoute>
-            <Layout />
+            <WalletProvider>
+              <Layout />
+            </WalletProvider>
           </ProtectedRoute>
         }
       >
         <Route path="dashboard" element={<Dashboard />} />
         <Route path="profile" element={<Profile />} />
+        <Route path="wallet" element={<Wallet />} />
 
         {/* Tickets */}
         <Route path="tickets" element={<TicketList />} />

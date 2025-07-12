@@ -7,84 +7,86 @@ import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
 import { Label } from "../../components/ui/label"
 import { Textarea } from "../../components/ui/textarea"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../../components/ui/select"
 import { Badge } from "../../components/ui/badge"
-import { Plus, DollarSign, Eye, Edit, Trash2 } from "lucide-react"
+import { ErrorAlert } from "../../components/ui/ErrorAlert"
+import { Plus, DollarSign, Eye, Edit, Trash2, Wallet, AlertTriangle } from "lucide-react"
+import { useWallet } from "../contexts/WalletContext"
+import { stellarApi } from "../services/stellarApi"
+import type { Service } from "../types/wallet"
 
-interface MyService {
-  id: string
-  name: string
-  description: string
-  price: number
-  currency: string
-  category: string
-  status: "active" | "draft" | "paused"
-  sales: number
-  views: number
-}
-
-const mockMyServices: MyService[] = [
+const mockMyServices: Service[] = [
   {
     id: "1",
+    sellerPublicKey: "GDSV2X2RM4HEXBHYWNLSEXWJEPKJDPJTGPNKQS2TESHLCX6N3VTM5O5E",
     name: "Custom Stellar Integration",
     description: "Professional Stellar blockchain integration for web applications",
-    price: 499,
-    currency: "BLUD",
-    category: "Development",
-    status: "active",
-    sales: 12,
-    views: 156,
-  },
-  {
-    id: "2",
-    name: "Token Economics Consulting",
-    description: "Expert consultation on tokenomics and blockchain economics",
-    price: 299,
-    currency: "BLUD",
-    category: "Consulting",
-    status: "active",
-    sales: 8,
-    views: 89,
+    bludPrice: "499",
+    status: "available",
+    createdAt: "2024-01-15T10:30:00Z",
   },
 ]
 
 export const Sell: React.FC = () => {
-  const [myServices, setMyServices] = useState<MyService[]>(mockMyServices)
+  const { wallet, error, clearError } = useWallet()
+  const [myServices, setMyServices] = useState<Service[]>(mockMyServices)
   const [showCreateForm, setShowCreateForm] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
   const [formData, setFormData] = useState({
     name: "",
     description: "",
-    price: "",
-    currency: "BLUD",
-    category: "",
+    bludPrice: "",
   })
 
-  const handleCreateService = (e: React.FormEvent) => {
+  const clearCreateError = () => setCreateError(null)
+
+  const handleCreateService = async (e: React.FormEvent) => {
     e.preventDefault()
-    const newService: MyService = {
-      id: Date.now().toString(),
-      name: formData.name,
-      description: formData.description,
-      price: Number.parseFloat(formData.price),
-      currency: formData.currency,
-      category: formData.category,
-      status: "draft",
-      sales: 0,
-      views: 0,
+
+    if (!wallet) {
+      setCreateError("Please create a wallet first")
+      return
     }
 
-    setMyServices([...myServices, newService])
-    setFormData({ name: "", description: "", price: "", currency: "BLUD", category: "" })
-    setShowCreateForm(false)
+    setIsLoading(true)
+    setCreateError(null)
+
+    try {
+      const response = await stellarApi.sellService({
+        sellerSecret: wallet.secretKey,
+        serviceName: formData.name,
+        description: formData.description,
+        bludAmount: formData.bludPrice,
+      })
+
+      const newService: Service = {
+        id: response.result.id,
+        sellerPublicKey: response.result.seller_public_key,
+        name: response.result.name,
+        description: response.result.description,
+        bludPrice: response.result.blud_price,
+        status: response.result.status as "available",
+        createdAt: response.result.created_at,
+      }
+
+      setMyServices([newService, ...myServices])
+      setFormData({ name: "", description: "", bludPrice: "" })
+      setShowCreateForm(false)
+    } catch (error: any) {
+      console.error("Failed to create service:", error)
+      setCreateError(error.message || "Failed to list service. Please try again.")
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "active":
+      case "available":
         return "bg-green-100 text-green-800"
-      case "draft":
-        return "bg-gray-100 text-gray-800"
-      case "paused":
+      case "sold":
+        return "bg-blue-100 text-blue-800"
+      case "pending":
         return "bg-yellow-100 text-yellow-800"
       default:
         return "bg-gray-100 text-gray-800"
@@ -99,11 +101,43 @@ export const Sell: React.FC = () => {
           <h1 className="text-3xl font-bold">Sell Services</h1>
           <p className="text-gray-600">Manage your service listings and track performance</p>
         </div>
-        <Button onClick={() => setShowCreateForm(true)}>
-          <Plus className="h-4 w-4 mr-2" />
-          Create Service
-        </Button>
+        <div className="flex gap-2">
+          {wallet && (
+            <Card className="p-4">
+              <div className="flex items-center space-x-2">
+                <Wallet className="h-5 w-5 text-purple-600" />
+                <div>
+                  <p className="text-sm text-gray-600">BLUD Balance</p>
+                  <p className="font-bold text-purple-600">{wallet.balance.blud}</p>
+                </div>
+              </div>
+            </Card>
+          )}
+          <Button onClick={() => setShowCreateForm(true)} disabled={!wallet}>
+            <Plus className="h-4 w-4 mr-2" />
+            Create Service
+          </Button>
+        </div>
       </div>
+
+      <ErrorAlert error={error || createError} onClose={error ? clearError : clearCreateError} />
+
+      {!wallet && (
+        <Card className="border-yellow-200 bg-yellow-50">
+          <CardContent className="pt-6">
+            <div className="flex items-center space-x-2 text-yellow-800">
+              <AlertTriangle className="h-5 w-5" />
+              <div>
+                <p className="font-medium">Wallet Required</p>
+                <p className="text-sm">
+                  You need to create a wallet to sell services and receive payments. Go to your Wallet page to get
+                  started.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -116,21 +150,25 @@ export const Sell: React.FC = () => {
         <Card>
           <CardContent className="pt-6 text-center">
             <div className="text-2xl font-bold text-green-600">
-              {myServices.filter((s) => s.status === "active").length}
+              {myServices.filter((s) => s.status === "available").length}
             </div>
             <p className="text-sm text-gray-600">Active Services</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6 text-center">
-            <div className="text-2xl font-bold text-purple-600">{myServices.reduce((sum, s) => sum + s.sales, 0)}</div>
-            <p className="text-sm text-gray-600">Total Sales</p>
+            <div className="text-2xl font-bold text-purple-600">
+              {myServices.reduce((sum, s) => sum + Number.parseFloat(s.bludPrice), 0)}
+            </div>
+            <p className="text-sm text-gray-600">Total Value (BLUD)</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-6 text-center">
-            <div className="text-2xl font-bold text-orange-600">{myServices.reduce((sum, s) => sum + s.views, 0)}</div>
-            <p className="text-sm text-gray-600">Total Views</p>
+            <div className="text-2xl font-bold text-orange-600">
+              {myServices.filter((s) => s.status === "sold").length}
+            </div>
+            <p className="text-sm text-gray-600">Sold Services</p>
           </CardContent>
         </Card>
       </div>
@@ -156,21 +194,15 @@ export const Sell: React.FC = () => {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="category">Category *</Label>
-                  <Select
-                    value={formData.category}
-                    onValueChange={(value) => setFormData({ ...formData, category: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Development">Development</SelectItem>
-                      <SelectItem value="Consulting">Consulting</SelectItem>
-                      <SelectItem value="Security">Security</SelectItem>
-                      <SelectItem value="Design">Design</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="price">Price (BLUD) *</Label>
+                  <Input
+                    id="price"
+                    type="number"
+                    value={formData.bludPrice}
+                    onChange={(e) => setFormData({ ...formData, bludPrice: e.target.value })}
+                    placeholder="0"
+                    required
+                  />
                 </div>
               </div>
 
@@ -186,40 +218,13 @@ export const Sell: React.FC = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="price">Price *</Label>
-                  <Input
-                    id="price"
-                    type="number"
-                    value={formData.price}
-                    onChange={(e) => setFormData({ ...formData, price: e.target.value })}
-                    placeholder="0.00"
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="currency">Currency</Label>
-                  <Select
-                    value={formData.currency}
-                    onValueChange={(value) => setFormData({ ...formData, currency: value })}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="BLUD">BLUD</SelectItem>
-                      <SelectItem value="USD">USD</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
               <div className="flex justify-end space-x-4">
                 <Button type="button" variant="outline" onClick={() => setShowCreateForm(false)}>
                   Cancel
                 </Button>
-                <Button type="submit">Create Service</Button>
+                <Button type="submit" disabled={isLoading}>
+                  {isLoading ? "Creating..." : "Create Service"}
+                </Button>
               </div>
             </form>
           </CardContent>
@@ -254,22 +259,10 @@ export const Sell: React.FC = () => {
                   <div className="space-y-4">
                     <div className="flex justify-between items-center">
                       <div>
-                        <p className="text-2xl font-bold text-blue-600">
-                          {service.price} {service.currency}
+                        <p className="text-2xl font-bold text-purple-600">{service.bludPrice} BLUD</p>
+                        <p className="text-sm text-gray-500">
+                          Created: {new Date(service.createdAt).toLocaleDateString()}
                         </p>
-                        <p className="text-sm text-gray-500">{service.category}</p>
-                      </div>
-                      <div className="text-right">
-                        <div className="flex items-center space-x-4 text-sm text-gray-500">
-                          <div className="flex items-center space-x-1">
-                            <DollarSign className="h-4 w-4" />
-                            <span>{service.sales} sales</span>
-                          </div>
-                          <div className="flex items-center space-x-1">
-                            <Eye className="h-4 w-4" />
-                            <span>{service.views} views</span>
-                          </div>
-                        </div>
                       </div>
                     </div>
 

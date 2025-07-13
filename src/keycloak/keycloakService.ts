@@ -14,7 +14,7 @@ const initKeycloak = async (realm: string) => {
   const isIframe = window.self !== window.top
   const onLoadMode = isIframe ? "check-sso" : "login-required"
   const currentUrl = window.location.origin + window.location.pathname + window.location.search
-  const realmName = "FLEXIS-DEV" // Fixed realm name
+  const realmName = "FELIX_DEV" // Fixed realm name
 
   keycloak = new Keycloak({
     url: "https://iam-uat.cateina.com",
@@ -47,17 +47,22 @@ const initKeycloak = async (realm: string) => {
       Cookies.set("realm", realm, { expires: 1, secure: true })
       Cookies.set("username", (keycloak.tokenParsed as KeycloakTokenParsed).email, { expires: 1, secure: true })
       const groups = (keycloak.tokenParsed as KeycloakTokenParsed) || []
-      console.log("groups??", groups.realm_access.roles)
-      // const role = groups
-      //   .map((g: string) => {
-      //     const noSlash = g.startsWith("/") ? g.substring(1) : g
-      //     return noSlash.split("_")[0]
-      //   })
-      //   .find(Boolean)
-
-      // Cookies.set("role", "USER_ROLE", { expires: 1, secure: true })
-      Cookies.set("role", "admin", { expires: 1, secure: true })
-
+      const skipRoles = [
+        "offline_access",
+        "default-roles-felix_dev",
+        "uma_authorization"
+      ];
+      
+      const roles = groups?.realm_access?.roles || [];
+      
+      const filteredRoles = roles.filter((role: string) => !skipRoles.includes(role));
+      
+      if (filteredRoles.length > 0) {
+        Cookies.set("role", filteredRoles[0], { expires: 1, secure: true });
+        console.log("Role set in cookie:", filteredRoles[0]);
+      } else {
+        console.log("No custom role found to set in cookie.");
+      }      
 
       let emailToStore = (keycloak.tokenParsed as KeycloakTokenParsed).email
       if (emailToStore && emailToStore.includes("%")) {

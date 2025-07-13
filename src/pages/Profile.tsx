@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card"
-import { Button } from "../../components/ui/button"
+// import { Button } from "../../components/ui/button"
 import { Input } from "../../components/ui/input"
 import { Label } from "../../components/ui/label"
 import { Avatar, AvatarFallback, AvatarImage } from "../../components/ui/avatar"
@@ -91,16 +91,16 @@ export const Profile: React.FC = () => {
                 <Label htmlFor="role">Role</Label>
                 <div className="flex items-center space-x-2">
                   <Shield className="h-4 w-4 text-gray-400" />
-                  <Input id="role" value={user?.role || ""} readOnly />
+                  <Input id="role" value={user?.role?.replace("-", " ") || ""} readOnly />
                 </div>
               </div>
             </div>
 
-            <div className="pt-4">
+            {/* <div className="pt-4">
               <Button disabled className="w-full md:w-auto">
                 Edit Profile (Coming Soon)
               </Button>
-            </div>
+            </div> */}
           </CardContent>
         </Card>
       </div>

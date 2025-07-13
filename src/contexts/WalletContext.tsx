@@ -1,8 +1,9 @@
+// contexts/WalletContext.tsx
 "use client"
 
 import type React from "react"
-import { createContext, useContext, useState, useEffect } from "react"
-import type { WalletAccount, Transaction } from "../types/wallet"
+import { createContext, useContext, useState, useEffect, useCallback } from "react"
+import type { WalletAccount, Transaction, Trustline } from "../types/wallet"
 import { stellarApi } from "../services/stellarApi"
 import { useAuth } from "./AuthContext"
 
@@ -13,10 +14,11 @@ interface WalletContextType {
   error: string | null
   createWallet: () => Promise<void>
   sendLumens: (destinationPublic: string, amount: string) => Promise<void>
-  createTrustline: (limit: string) => Promise<void>
-  convertXLMToBLUD: (xlmAmount: string) => Promise<void>
+  establishBludTrustline: (assetCode: string, issuerPublicKey: string, limit: string) => Promise<void>
   refreshWallet: () => Promise<void>
   clearError: () => void
+  // Added for admin-specific BLUD sending
+  sendBlud?: (receiverPublicKey: string, amount: string, memo?: string) => Promise<void>;
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined)
@@ -28,45 +30,110 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Create unique wallet key per user (email + role combination)
-  const getWalletKey = () => {
+  const getWalletKey = useCallback(() => {
     if (!user) return null
     return `wallet_${user.email}_${user.role}`
-  }
+  }, [user])
 
-  // Load wallet from localStorage on mount
-  useEffect(() => {
-    const walletKey = getWalletKey()
-    if (walletKey) {
-      const savedWallet = localStorage.getItem(walletKey)
-      const savedTransactions = localStorage.getItem(`${walletKey}_transactions`)
-
-      if (savedWallet) {
-        setWallet(JSON.parse(savedWallet))
+  const saveWalletLocally = useCallback(
+    (walletData: WalletAccount) => {
+      const walletKey = getWalletKey()
+      if (walletKey) {
+        localStorage.setItem(walletKey, JSON.stringify(walletData))
+        setWallet(walletData)
       }
+    },
+    [getWalletKey],
+  )
+
+  const saveTransactionsLocally = useCallback(
+    (txs: Transaction[]) => {
+      const walletKey = getWalletKey()
+      if (walletKey) {
+        localStorage.setItem(`${walletKey}_transactions`, JSON.stringify(txs))
+        setTransactions(txs)
+      }
+    },
+    [getWalletKey],
+  )
+
+  const clearError = () => setError(null)
+
+  const refreshWallet = useCallback(async () => {
+    const walletKey = getWalletKey()
+    if (!walletKey) {
+      setWallet(null)
+      setTransactions([])
+      return
+    }
+
+    const savedWallet = localStorage.getItem(walletKey)
+    if (!savedWallet) {
+      setWallet(null)
+      setTransactions([])
+      return
+    }
+
+    const currentWallet: WalletAccount = JSON.parse(savedWallet)
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      const balanceResponse = await stellarApi.getAccountBalance(currentWallet.publicKey)
+      const balances = balanceResponse.result || []
+
+      const xlmBalance = balances.find((b: any) => b.asset_type === "native")?.balance || "0"
+
+      let bludBalance = "0";
+      // Removed bludLimit here as it's not directly displayed in Wallet.tsx's balance summary
+      const updatedTrustlines: Trustline[] = [];
+
+      balances.forEach((b: any) => {
+        if (b.asset_type !== "native" && b.asset_code && b.asset_issuer) {
+          const trustline: Trustline = {
+            assetCode: b.asset_code,
+            assetIssuer: b.asset_issuer,
+            balance: b.balance,
+            limit: b.limit || "0",
+          };
+          updatedTrustlines.push(trustline);
+
+          if (b.asset_code === "BLUD") {
+            bludBalance = b.balance;
+          }
+        }
+      });
+
+      const updatedWallet: WalletAccount = {
+        ...currentWallet,
+        balance: {
+          xlm: xlmBalance,
+          blud: bludBalance,
+        },
+        trustlines: updatedTrustlines,
+      }
+      saveWalletLocally(updatedWallet)
+
+      const savedTransactions = localStorage.getItem(`${walletKey}_transactions`)
       if (savedTransactions) {
         setTransactions(JSON.parse(savedTransactions))
       }
+    } catch (err: any) {
+      console.error("Error refreshing wallet:", err)
+      setError(err.message || "Failed to refresh wallet balance.")
+    } finally {
+      setIsLoading(false)
     }
-  }, [user])
+  }, [getWalletKey, saveWalletLocally])
 
-  const saveWallet = (walletData: WalletAccount) => {
-    const walletKey = getWalletKey()
-    if (walletKey) {
-      localStorage.setItem(walletKey, JSON.stringify(walletData))
-      setWallet(walletData)
+  useEffect(() => {
+    if (user) {
+      refreshWallet()
+    } else {
+      setWallet(null)
+      setTransactions([])
     }
-  }
-
-  const saveTransactions = (txs: Transaction[]) => {
-    const walletKey = getWalletKey()
-    if (walletKey) {
-      localStorage.setItem(`${walletKey}_transactions`, JSON.stringify(txs))
-      setTransactions(txs)
-    }
-  }
-
-  const clearError = () => setError(null)
+  }, [user, refreshWallet])
 
   const createWallet = async () => {
     setIsLoading(true)
@@ -79,23 +146,17 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         publicKey: response.publicKey,
         secretKey: response.secretKey,
         balance: {
-          xlm: "10000", // Default testnet funding
+          xlm: "0",
           blud: "0",
         },
         trustlines: [],
       }
 
-      saveWallet(newWallet)
-
-      // Automatically create BLUD trustline
-      try {
-        await createTrustline("10000000")
-      } catch (trustlineError) {
-        console.warn("Trustline creation failed, but wallet was created:", trustlineError)
-      }
-    } catch (error: any) {
-      console.error("Error creating wallet:", error)
-      setError(error.message || "Failed to create wallet. Please try again.")
+      saveWalletLocally(newWallet)
+      await refreshWallet()
+    } catch (err: any) {
+      console.error("Error creating wallet:", err)
+      setError(err.message || "Failed to create wallet. Please try again.")
     } finally {
       setIsLoading(false)
     }
@@ -104,17 +165,6 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const sendLumens = async (destinationPublic: string, amount: string) => {
     if (!wallet) {
       setError("No wallet available")
-      return
-    }
-
-    const currentBalance = Number.parseFloat(wallet.balance.xlm)
-    const sendAmount = Number.parseFloat(amount)
-    const fee = 0.0001
-
-    if (currentBalance < sendAmount + fee) {
-      setError(
-        `Insufficient XLM balance. You have ${currentBalance} XLM but need ${sendAmount + fee} XLM (including fee)`,
-      )
       return
     }
 
@@ -128,7 +178,6 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         amount,
       })
 
-      // Add transaction to history
       const newTransaction: Transaction = {
         id: response.result.id,
         hash: response.result.hash,
@@ -142,26 +191,17 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
 
       const updatedTransactions = [newTransaction, ...transactions]
-      saveTransactions(updatedTransactions)
-
-      // Update wallet balance
-      const updatedWallet = {
-        ...wallet,
-        balance: {
-          ...wallet.balance,
-          xlm: (currentBalance - sendAmount - fee).toString(),
-        },
-      }
-      saveWallet(updatedWallet)
-    } catch (error: any) {
-      console.error("Error sending lumens:", error)
-      setError(error.message || "Failed to send transaction. Please try again.")
+      saveTransactionsLocally(updatedTransactions)
+      await refreshWallet()
+    } catch (err: any) {
+      console.error("Error sending lumens:", err)
+      setError(err.message || "Failed to send transaction. Please try again.")
     } finally {
       setIsLoading(false)
     }
   }
 
-  const createTrustline = async (limit: string) => {
+  const establishBludTrustline = useCallback(async (assetCode: string, issuerPublicKey: string, limit: string) => {
     if (!wallet) {
       setError("No wallet available")
       return
@@ -171,124 +211,88 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setError(null)
 
     try {
-      const response = await stellarApi.createTrustline({
+      const response = await stellarApi.changeTrustline({
         accountSecret: wallet.secretKey,
-        limit,
+        assetCode: assetCode,
+        issuerPublicKey: issuerPublicKey,
+        limit: limit,
       })
 
-      // Add trustline to wallet
-      const newTrustline = {
-        assetCode: "BLUD",
-        assetIssuer: "ISSUER_PUBLIC_KEY", // This should come from your config
-        limit,
-        balance: "0",
-      }
-
-      const updatedWallet = {
-        ...wallet,
-        trustlines: [...wallet.trustlines.filter((t) => t.assetCode !== "BLUD"), newTrustline],
-      }
-      saveWallet(updatedWallet)
-
-      // Add transaction to history
       const newTransaction: Transaction = {
-        id: response.result.id,
-        hash: response.result.hash,
+        id: response.result?.id || `trustline-${Date.now()}`,
+        hash: response.result?.hash || `hash-${Date.now()}`,
         sourceAccount: wallet.publicKey,
         amount: "0",
-        assetCode: "BLUD",
+        assetCode: assetCode,
         type: "trustline",
         status: "completed",
-        createdAt: response.result.created_at,
+        createdAt: response.result?.created_at || new Date().toISOString(),
       }
 
       const updatedTransactions = [newTransaction, ...transactions]
-      saveTransactions(updatedTransactions)
-    } catch (error: any) {
-      console.error("Error creating trustline:", error)
-      setError(error.message || "Failed to create trustline. Please try again.")
+      saveTransactionsLocally(updatedTransactions)
+      await refreshWallet()
+    } catch (err: any) {
+      console.error("Error establishing trustline:", err)
+      setError(
+        err.message ||
+          `Failed to establish ${assetCode} trustline. Please ensure your account has enough XLM to cover transaction fees (0.5 XLM per trustline).`,
+      )
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [wallet, setIsLoading, setError, refreshWallet, saveTransactionsLocally, transactions])
 
-  const convertXLMToBLUD = async (xlmAmount: string) => {
-    if (!wallet) {
-      setError("No wallet available")
-      return
+  // Admin-specific function to send BLUD
+  const sendBlud = useCallback(async (receiverPublicKey: string, amount: string, memo?: string) => {
+    if (!user || user.role !== 'admin') {
+      setError("Permission denied. Only admins can send BLUD this way.");
+      return;
     }
 
-    const xlmBalance = Number.parseFloat(wallet.balance.xlm)
-    const convertAmount = Number.parseFloat(xlmAmount)
-
-    if (xlmBalance < convertAmount) {
-      setError(`Insufficient XLM balance. You have ${xlmBalance} XLM but need ${convertAmount} XLM`)
-      return
+    if (!wallet || !wallet.secretKey) {
+        setError("Admin wallet not loaded or secret key missing.");
+        return;
     }
 
-    setIsLoading(true)
-    setError(null)
+    setIsLoading(true);
+    setError(null);
 
     try {
-      // Convert XLM to BLUD using the currency creation API
-      // This assumes 1 XLM = 100 BLUD conversion rate
-      const bludAmount = (convertAmount * 100).toString()
+      const BLUD_ASSET_CODE = "BLUD"; // Assuming BLUD is the asset admin will issue
 
-      const response = await stellarApi.createCurrency({
-        issuerSecret: wallet.secretKey, // In real app, this would be the issuer's secret
-        distributorPublicKey: wallet.publicKey,
-        assetCode: "BLUD",
-        amount: bludAmount,
-      })
+      const response = await stellarApi.sendCurrency({
+        issuerSecret: wallet.secretKey, // Admin's secret key is the issuer's secret
+        receiverPublicKey: receiverPublicKey,
+        assetCode: BLUD_ASSET_CODE,
+        amount: amount,
+        memo: memo || BLUD_ASSET_CODE
+      });
 
-      // Update wallet balances
-      const updatedWallet = {
-        ...wallet,
-        balance: {
-          xlm: (xlmBalance - convertAmount).toString(),
-          blud: (Number.parseFloat(wallet.balance.blud) + Number.parseFloat(bludAmount)).toString(),
-        },
-      }
-      saveWallet(updatedWallet)
-
-      // Add transaction to history
       const newTransaction: Transaction = {
-        id: response.result.id,
-        hash: response.result.hash,
-        sourceAccount: wallet.publicKey,
-        amount: bludAmount,
-        assetCode: "BLUD",
-        type: "service",
+        id: response.result?.id || `sendblud-${Date.now()}`,
+        hash: response.result?.hash || `hash-${Date.now()}`,
+        sourceAccount: wallet.publicKey, // Admin's public key
+        destinationAccount: receiverPublicKey,
+        amount: amount,
+        assetCode: BLUD_ASSET_CODE,
+        type: "payment",
         status: "completed",
-        createdAt: response.result.created_at,
-        memo: `Converted ${xlmAmount} XLM to ${bludAmount} BLUD`,
-      }
+        createdAt: response.result?.created_at || new Date().toISOString(),
+      };
 
-      const updatedTransactions = [newTransaction, ...transactions]
-      saveTransactions(updatedTransactions)
-    } catch (error: any) {
-      console.error("Error converting XLM to BLUD:", error)
-      setError(error.message || "Failed to convert XLM to BLUD. Please try again.")
+      const updatedTransactions = [newTransaction, ...transactions];
+      saveTransactionsLocally(updatedTransactions);
+      await refreshWallet();
+    } catch (err: any) {
+      console.error("Error sending BLUD:", err);
+      // General error message, no balance validation specific message
+      setError(err.message || "Failed to send BLUD. Please ensure the recipient has a BLUD trustline and the Stellar network conditions are met.");
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }
+  }, [user, wallet, setIsLoading, setError, refreshWallet, saveTransactionsLocally, transactions]);
 
-  const refreshWallet = async () => {
-    // In a real app, you'd fetch the latest balance from Stellar
-    const walletKey = getWalletKey()
-    if (walletKey) {
-      const savedWallet = localStorage.getItem(walletKey)
-      const savedTransactions = localStorage.getItem(`${walletKey}_transactions`)
-
-      if (savedWallet) {
-        setWallet(JSON.parse(savedWallet))
-      }
-      if (savedTransactions) {
-        setTransactions(JSON.parse(savedTransactions))
-      }
-    }
-  }
 
   return (
     <WalletContext.Provider
@@ -299,10 +303,10 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         error,
         createWallet,
         sendLumens,
-        createTrustline,
-        convertXLMToBLUD,
+        establishBludTrustline,
         refreshWallet,
         clearError,
+        sendBlud: user?.role === 'admin' ? sendBlud : undefined, // Conditionally provide sendBlud
       }}
     >
       {children}

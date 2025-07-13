@@ -1,3 +1,4 @@
+// pages/Wallet.tsx
 "use client"
 
 import type React from "react"
@@ -23,12 +24,11 @@ import {
   Clock,
   CheckCircle,
   AlertCircle,
-  ArrowRightLeft,
   Info,
 } from "lucide-react"
 
 export const Wallet: React.FC = () => {
-  const { user } = useAuth()
+  const { user, hasRole } = useAuth()
   const {
     wallet,
     transactions,
@@ -36,9 +36,9 @@ export const Wallet: React.FC = () => {
     error,
     createWallet,
     sendLumens,
-    convertXLMToBLUD,
     refreshWallet,
     clearError,
+    establishBludTrustline,
   } = useWallet()
 
   const [showSecretKey, setShowSecretKey] = useState(false)
@@ -46,11 +46,9 @@ export const Wallet: React.FC = () => {
     destinationPublic: "",
     amount: "",
   })
-  const [convertForm, setConvertForm] = useState({
-    xlmAmount: "",
-  })
   const [showSendForm, setShowSendForm] = useState(false)
-  const [showConvertForm, setShowConvertForm] = useState(false)
+  const [bludIssuerPublicKeyInput, setBludIssuerPublicKeyInput] = useState<string>("")
+  const [trustlineError, setTrustlineError] = useState<string | null>(null) // Separate error for trustline form
 
   const handleCreateWallet = async () => {
     await createWallet()
@@ -65,14 +63,29 @@ export const Wallet: React.FC = () => {
     }
   }
 
-  const handleConvertXLMToBLUD = async (e: React.FormEvent) => {
-    e.preventDefault()
-    await convertXLMToBLUD(convertForm.xlmAmount)
-    if (!error) {
-      setConvertForm({ xlmAmount: "" })
-      setShowConvertForm(false)
+  const handleEstablishBludTrustline = async () => {
+    setTrustlineError(null); // Clear previous trustline errors
+
+    if (!bludIssuerPublicKeyInput.trim()) {
+        setTrustlineError("Please enter the BLUD Issuer Public Key.");
+        return;
     }
-  }
+    // Basic validation for Stellar Public Key format (starts with G, 56 characters)
+    if (!bludIssuerPublicKeyInput.startsWith("G") || bludIssuerPublicKeyInput.length !== 56) {
+        setTrustlineError("Invalid Stellar Public Key format for issuer. It should start with 'G' and be 56 characters long.");
+        return;
+    }
+
+
+    const defaultBludLimit = "1000000000"; // A very large number
+    // Pass "BLUD" as asset code and the input issuer public key
+    await establishBludTrustline("BLUD", bludIssuerPublicKeyInput.trim(), defaultBludLimit);
+    // If successful, clear input
+    if (!error && !isLoading) { // Check global error and loading from context
+      setBludIssuerPublicKeyInput("");
+    }
+  };
+
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text)
@@ -80,13 +93,18 @@ export const Wallet: React.FC = () => {
   }
 
   const getTransactionIcon = (type: string, sourceAccount: string) => {
-    if (type === "service") {
-      return <ArrowRightLeft className="h-4 w-4 text-blue-500" />
+    if (!wallet) return null
+    const isOutgoing = sourceAccount === wallet.publicKey
+    if (type === "trustline") {
+      return <Info className="h-4 w-4 text-blue-500" />
+    } else if (type === "payment") {
+      return isOutgoing ? (
+        <ArrowUpRight className="h-4 w-4 text-red-500" />
+      ) : (
+        <ArrowDownLeft className="h-4 w-4 text-green-500" />
+      )
     }
-    if (wallet && sourceAccount === wallet.publicKey) {
-      return <ArrowUpRight className="h-4 w-4 text-red-500" />
-    }
-    return <ArrowDownLeft className="h-4 w-4 text-green-500" />
+    return <Clock className="h-4 w-4 text-gray-500" />
   }
 
   const getStatusIcon = (status: string) => {
@@ -104,7 +122,7 @@ export const Wallet: React.FC = () => {
 
   if (!wallet) {
     return (
-      <div className="max-w-4xl mx-auto space-y-8">
+      <div className="max-w-4xl mx-auto space-y-8 p-4">
         <div>
           <h1 className="text-3xl font-bold">Wallet</h1>
           <p className="text-gray-600">Manage your personal Stellar wallet and BLUD tokens</p>
@@ -135,9 +153,12 @@ export const Wallet: React.FC = () => {
         <Alert>
           <Info className="h-4 w-4" />
           <AlertDescription>
-            <strong>Important:</strong> Each user role has its own separate wallet. Your {user?.role} wallet will be
-            independent from any other role wallets you may have. Your wallet will be created on the Stellar testnet.
-            Keep your secret key safe and never share it with anyone.
+            <p className="text-sm">
+              <strong>Important:</strong> Each user role has its own separate wallet. Your {user?.role} wallet will be
+              independent from any other role wallets you may have. Your wallet will be created on the Stellar testnet.
+              To receive BLUD tokens, you will need to establish a BLUD trustline. Keep your secret key safe and never
+              share it with anyone.
+            </p>
           </AlertDescription>
         </Alert>
       </div>
@@ -145,7 +166,7 @@ export const Wallet: React.FC = () => {
   }
 
   return (
-    <div className="max-w-6xl mx-auto space-y-8">
+    <div className="max-w-6xl mx-auto space-y-8 p-4">
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
@@ -159,13 +180,9 @@ export const Wallet: React.FC = () => {
           )}
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={refreshWallet}>
+          <Button variant="outline" onClick={refreshWallet} disabled={isLoading}>
             <RefreshCw className="h-4 w-4 mr-2" />
-            Refresh
-          </Button>
-          <Button onClick={() => setShowConvertForm(true)} variant="outline">
-            <ArrowRightLeft className="h-4 w-4 mr-2" />
-            Convert XLM to BLUD
+            {isLoading ? "Refreshing..." : "Refresh"}
           </Button>
           <Button onClick={() => setShowSendForm(true)}>
             <Send className="h-4 w-4 mr-2" />
@@ -174,7 +191,17 @@ export const Wallet: React.FC = () => {
         </div>
       </div>
 
+      {/* Trustline Error Alert */}
+      {trustlineError && (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>{trustlineError}</AlertDescription>
+          <Button variant="ghost" size="sm" onClick={() => setTrustlineError(null)} className="absolute top-2 right-2">x</Button>
+        </Alert>
+      )}
+
       <ErrorAlert error={error} onClose={clearError} />
+
 
       {/* Balance Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -193,20 +220,23 @@ export const Wallet: React.FC = () => {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <div className="w-8 h-8 bg-purple-500 rounded-full flex items-center justify-center">
-                <span className="text-white text-sm font-bold">BLUD</span>
-              </div>
-              <span>BLUD Tokens</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-purple-600">{wallet.balance.blud}</div>
-            <p className="text-sm text-gray-500">BLUD</p>
-          </CardContent>
-        </Card>
+        {/* Conditional rendering for BLUD Card based on role */}
+        {!hasRole("admin") && (
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center space-x-2">
+                <div className="w-8 h-8 bg-purple-500 rounded-full flex items-center justify-center">
+                  <span className="text-white text-sm font-bold">BLUD</span>
+                </div>
+                <span>BLUD Tokens</span>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-3xl font-bold text-purple-600">{wallet.balance.blud}</div>
+              <p className="text-sm text-gray-500">BLUD</p>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Wallet Details */}
@@ -246,44 +276,39 @@ export const Wallet: React.FC = () => {
         </CardContent>
       </Card>
 
-      {/* Convert XLM to BLUD Form */}
-      {showConvertForm && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Convert XLM to BLUD</CardTitle>
-            <CardDescription>Convert your XLM to BLUD tokens (Rate: 1 XLM = 100 BLUD)</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form onSubmit={handleConvertXLMToBLUD} className="space-y-4">
+      {/* Conditional rendering for BLUD Trustline creation */}
+      {wallet && !wallet.trustlines.some((t) => t.assetCode === "BLUD") && !hasRole("admin") && (
+        <Card className="border-blue-200 bg-blue-50">
+          <CardContent className="pt-6">
+            <div className="flex items-center space-x-2 text-blue-800 mb-4">
+              <Info className="h-5 w-5" />
               <div>
-                <Label htmlFor="xlmAmount">XLM Amount to Convert</Label>
-                <Input
-                  id="xlmAmount"
-                  type="number"
-                  step="0.0000001"
-                  placeholder="0.00"
-                  value={convertForm.xlmAmount}
-                  onChange={(e) => setConvertForm({ xlmAmount: e.target.value })}
-                  required
-                />
-                <p className="text-sm text-gray-500 mt-1">
-                  Available: {wallet.balance.xlm} XLM
-                  {convertForm.xlmAmount && (
-                    <span className="ml-2 text-purple-600">
-                      → {(Number.parseFloat(convertForm.xlmAmount) * 100).toFixed(2)} BLUD
-                    </span>
-                  )}
+                <p className="font-medium">BLUD Trustline Required</p>
+                <p className="text-sm">
+                  To receive BLUD tokens, you need to establish a trustline. This allows your wallet to hold BLUD.
                 </p>
               </div>
-              <div className="flex justify-end space-x-2">
-                <Button type="button" variant="outline" onClick={() => setShowConvertForm(false)}>
-                  Cancel
+            </div>
+
+            <div className="space-y-4">
+                <div>
+                    <Label htmlFor="bludIssuerKey">BLUD Issuer Public Key *</Label>
+                    <Input
+                        id="bludIssuerKey"
+                        placeholder="Enter the BLUD Issuer's Public Key (e.g., from Admin page)"
+                        value={bludIssuerPublicKeyInput}
+                        onChange={(e) => setBludIssuerPublicKeyInput(e.target.value)}
+                        disabled={isLoading}
+                        className="mt-1"
+                    />
+                    <p className="text-xs text-gray-500 mt-1">
+                        This is the public key of the account that issues the BLUD token.
+                    </p>
+                </div>
+                <Button onClick={handleEstablishBludTrustline} disabled={isLoading} className="w-full">
+                    {isLoading ? "Creating Trustline..." : "Create BLUD Trustline"}
                 </Button>
-                <Button type="submit" disabled={isLoading}>
-                  {isLoading ? "Converting..." : "Convert to BLUD"}
-                </Button>
-              </div>
-            </form>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -347,8 +372,9 @@ export const Wallet: React.FC = () => {
                   <div>
                     <p className="font-medium">{trustline.assetCode}</p>
                     <p className="text-sm text-gray-500">
-                      Balance: {trustline.balance} / {trustline.limit}
+                      Balance: {trustline.balance} / {trustline.limit || 'Unlimited'} {/* Display limit or 'Unlimited' */}
                     </p>
+                    <p className="text-xs text-gray-400">Issuer: {trustline.assetIssuer.substring(0, 20)}...</p>
                   </div>
                   <Badge variant="outline">Active</Badge>
                 </div>
